@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.graphics.drawable.Icon
 import android.os.Build
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.getSystemService
@@ -19,8 +20,8 @@ import com.mikepenz.iconics.typeface.library.community.material.CommunityMateria
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.homeassistant.companion.android.common.R as commonR
 import io.homeassistant.companion.android.common.data.integration.Entity
-import io.homeassistant.companion.android.common.data.integration.domain
 import io.homeassistant.companion.android.common.data.integration.getIcon
+import io.homeassistant.companion.android.common.data.integration.isUsableInTile
 import io.homeassistant.companion.android.common.data.servers.ServerManager
 import io.homeassistant.companion.android.database.qs.TileDao
 import io.homeassistant.companion.android.database.qs.TileEntity
@@ -145,14 +146,14 @@ class ManageTilesViewModel @Inject constructor(
         private set
     var sortedEntities by mutableStateOf<List<Entity>>(emptyList())
         private set
-    var selectedServerId by mutableStateOf(ServerManager.SERVER_ID_ACTIVE)
+    var selectedServerId by mutableIntStateOf(ServerManager.SERVER_ID_ACTIVE)
         private set
     var selectedIconId by mutableStateOf<String?>(null)
         private set
     var selectedEntityId by mutableStateOf("")
     var tileLabel by mutableStateOf("")
     var tileSubtitle by mutableStateOf<String?>(null)
-    var submitButtonLabel by mutableStateOf(commonR.string.tile_save)
+    var submitButtonLabel by mutableIntStateOf(commonR.string.tile_save)
         private set
     var selectedShouldVibrate by mutableStateOf(false)
     var tileAuthRequired by mutableStateOf(false)
@@ -183,7 +184,7 @@ class ManageTilesViewModel @Inject constructor(
                 async {
                     entities[it.id] = try {
                         serverManager.integrationRepository(it.id).getEntities().orEmpty()
-                            .filter { it.domain in ManageTilesFragment.validDomains }
+                            .filter(Entity::isUsableInTile)
                     } catch (e: Exception) {
                         Timber.e(e, "Couldn't load entities for server")
                         emptyList()

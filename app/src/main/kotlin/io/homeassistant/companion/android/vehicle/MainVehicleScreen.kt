@@ -4,7 +4,6 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.car.app.CarContext
 import androidx.car.app.model.Action
-import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarColor
 import androidx.car.app.model.CarIcon
 import androidx.car.app.model.GridTemplate
@@ -22,6 +21,7 @@ import io.homeassistant.companion.android.common.R as commonR
 import io.homeassistant.companion.android.common.data.authentication.SessionState
 import io.homeassistant.companion.android.common.data.integration.Entity
 import io.homeassistant.companion.android.common.data.integration.domain
+import io.homeassistant.companion.android.common.data.prefs.AutoFavorite
 import io.homeassistant.companion.android.common.data.prefs.PrefsRepository
 import io.homeassistant.companion.android.common.data.servers.ServerManager
 import io.homeassistant.companion.android.common.data.websocket.impl.entities.EntityRegistryResponse
@@ -30,6 +30,7 @@ import io.homeassistant.companion.android.sensors.SensorReceiver
 import io.homeassistant.companion.android.util.vehicle.SUPPORTED_DOMAINS
 import io.homeassistant.companion.android.util.vehicle.getChangeServerGridItem
 import io.homeassistant.companion.android.util.vehicle.getDomainList
+import io.homeassistant.companion.android.util.vehicle.getHeaderBuilder
 import io.homeassistant.companion.android.util.vehicle.getNavigationGridItem
 import io.homeassistant.companion.android.util.vehicle.nativeModeAction
 import kotlinx.coroutines.Job
@@ -52,7 +53,7 @@ class MainVehicleScreen(
 
     private var favoritesEntities: List<Entity> = listOf()
     private var entityRegistry: List<EntityRegistryResponse>? = null
-    private var favoritesList = emptyList<String>()
+    private var favoritesList = emptyList<AutoFavorite>()
     private var isLoggedIn: Boolean? = null
     private val domains = mutableSetOf<String>()
     private var domainsJob: Job? = null
@@ -124,19 +125,23 @@ class MainVehicleScreen(
     override fun onGetTemplate(): Template {
         if (isLoggedIn != true) {
             return GridTemplate.Builder().apply {
-                setTitle(carContext.getString(commonR.string.app_name))
-                setHeaderAction(Action.APP_ICON)
+                setHeader(
+                    carContext.getHeaderBuilder(
+                        title = commonR.string.app_name,
+                        action = Action.APP_ICON,
+                    ).build(),
+                )
                 setLoading(true)
             }.build()
         }
-        val serverHasFavorites = favoritesList.any { it.split("-")[0].toIntOrNull() == serverId.value }
+        val serverHasFavorites = favoritesList.any { it.serverId == serverId.value }
         val listBuilder = if (serverHasFavorites) {
             EntityGridVehicleScreen(
                 carContext,
                 serverManager,
                 serverId,
                 prefsRepository,
-                serverManager.integrationRepository(serverId.value),
+                { serverManager.integrationRepository(serverId.value) },
                 carContext.getString(commonR.string.favorites),
                 entityRegistry,
                 domains,
@@ -163,7 +168,7 @@ class MainVehicleScreen(
                 getNavigationGridItem(
                     carContext,
                     screenManager,
-                    serverManager.integrationRepository(serverId.value),
+                    { serverManager.integrationRepository(serverId.value) },
                     allEntities,
                     entityRegistry,
                 ).build(),
@@ -195,16 +200,14 @@ class MainVehicleScreen(
                 onRefresh()
             }.build()
 
-        val actionStripBuilder = ActionStrip.Builder()
+        val headerBuilder = carContext.getHeaderBuilder(commonR.string.app_name, Action.APP_ICON)
         if (isAutomotive && !isDrivingOptimized && BuildConfig.FLAVOR != "full") {
-            actionStripBuilder.addAction(nativeModeAction(carContext))
+            headerBuilder.addEndHeaderAction(nativeModeAction(carContext))
         }
-        actionStripBuilder.addAction(refreshAction)
+        headerBuilder.addEndHeaderAction(refreshAction)
 
         return GridTemplate.Builder().apply {
-            setTitle(carContext.getString(commonR.string.app_name))
-            setHeaderAction(Action.APP_ICON)
-            setActionStrip(actionStripBuilder.build())
+            setHeader(headerBuilder.build())
             if (!domainsAdded) {
                 setLoading(true)
             } else {
@@ -215,7 +218,9 @@ class MainVehicleScreen(
     }
 
     private fun getFavoritesList(entities: Map<String, Entity>): List<Entity> {
-        return entities.values.filter { entity -> favoritesList.contains("${serverId.value}-${entity.entityId}") }
-            .sortedBy { entity -> favoritesList.indexOf("${serverId.value}-${entity.entityId}") }
+        return entities.values.filter { entity ->
+            favoritesList.contains(AutoFavorite(serverId.value, entity.entityId))
+        }
+            .sortedBy { entity -> favoritesList.indexOf(AutoFavorite(serverId.value, entity.entityId)) }
     }
 }

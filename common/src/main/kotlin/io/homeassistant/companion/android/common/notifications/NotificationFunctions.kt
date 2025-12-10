@@ -17,6 +17,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.toColorInt
 import androidx.core.text.HtmlCompat
 import com.mikepenz.iconics.IconicsDrawable
 import com.mikepenz.iconics.utils.colorFilter
@@ -181,7 +182,7 @@ fun parseVibrationPattern(vibrationPattern: String?): LongArray {
 fun parseColor(context: Context, colorString: String?, default: Int): Int {
     if (!colorString.isNullOrBlank()) {
         try {
-            return Color.parseColor(colorString)
+            return colorString.toColorInt()
         } catch (e: Exception) {
             Timber.tag(NotificationData.TAG).e(e, "Unable to parse color")
         }
@@ -192,8 +193,7 @@ fun parseColor(context: Context, colorString: String?, default: Int): Int {
 fun handleSmallIcon(context: Context, builder: NotificationCompat.Builder, data: Map<String, String>) {
     val notificationIcon = data[NotificationData.NOTIFICATION_ICON] ?: ""
     if (notificationIcon.startsWith("mdi:") &&
-        notificationIcon.substringAfter("mdi:").isNotBlank() &&
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+        notificationIcon.substringAfter("mdi:").isNotBlank()
     ) {
         val iconName = notificationIcon.split(":")[1]
         val iconDrawable =

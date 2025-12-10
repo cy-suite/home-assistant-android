@@ -8,11 +8,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   yamllint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Register yamllint problem matcher
         run: |
@@ -24,7 +27,7 @@ jobs:
   lockfiles:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - uses: ./.github/actions/setup-build-env
         with:
@@ -50,12 +53,12 @@ jobs:
           fi
 
   ktlint:
-    needs: [yamllint, lockfiles]
+    needs: [yamllint]
     runs-on: ubuntu-latest
     permissions:
       security-events: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - uses: ./.github/actions/setup-build-env
         with:
@@ -72,12 +75,12 @@ jobs:
           category: "KTlint"
 
   lint:
-    needs: [yamllint, lockfiles]
+    needs: [lockfiles, ktlint]
     runs-on: ubuntu-latest
     permissions:
       security-events: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - uses: ./.github/actions/setup-build-env
         with:
@@ -89,7 +92,7 @@ jobs:
 
       - name: Upload lint reports (HTML)
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: lint-reports
           path: "**/build/reports/lint-results-*.html"
@@ -104,7 +107,7 @@ jobs:
     needs: [lint, lockfiles, ktlint]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - uses: ./.github/actions/setup-build-env
         with:
@@ -116,27 +119,25 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: Screenshot test results
           path: |
-              **/build/test-results/**/TEST-*.xml
+            **/build/test-results/**/TEST-*.xml
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: Screenshot test failure HTML report
           path: |
-              **/build/reports/screenshotTest/**
+            **/build/reports/screenshotTest/**
 
   pr_build:
-    needs: [yamllint, lockfiles]
+    needs: [lockfiles, ktlint]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
 
@@ -159,7 +160,7 @@ jobs:
 
       - name: Build Debug APK
         run: |
-          ./gradlew :common:assemble :app:assembleDebug :wear:assembleDebug :automotive:assembleDebug
+          ./gradlew :common:assemble :app:assembleDebug :wear:assembleDebug :automotive:assembleDebug -PnoStrictMode
 
       - name: Check for missing/modified DB schemas after build
         run: |
@@ -172,16 +173,49 @@ jobs:
           fi
 
       - name: Archive Debug Build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
+          name: APKs
           path: ./**/*.apk
+
+  pr_build_release:
+    needs: [lockfiles, ktlint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-build-env
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+          mock-google-services: "true"
+      - name: Generate dummy keystore
+        run: |
+          keytool -genkeypair -v \
+          -alias androiddebugkey \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000 \
+          -keystore /home/runner/work/android/android/ci_dummy_keystore.keystore \
+          -dname "CN=Android CI dummy, O=Android, C=FR" \
+          -storepass android \
+          -keypass android
+      - name: Build Release
+        env:
+          KEYSTORE_PATH: /home/runner/work/android/android/ci_dummy_keystore.keystore
+          KEYSTORE_ALIAS: androiddebugkey
+          KEYSTORE_ALIAS_PASSWORD: android
+          KEYSTORE_PASSWORD: android
+        # Disable lint tasks since we have a dedicated job for this in the workflow
+        run: |
+          ./gradlew :common:assemble :app:assembleRelease :wear:assembleRelease :automotive:assembleRelease
 
   unit_tests:
     name: "Unit Tests"
     needs: [lint, lockfiles, ktlint]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - uses: ./.github/actions/setup-build-env
         with:
@@ -194,7 +228,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: Unit test results
           path: |
@@ -209,32 +243,27 @@ jobs:
       fail-fast: false
       matrix:
         configuration:
-          - api-level: 21
+          - api-level: 23
             arch: x86_64
             profile: "Nexus 5"
             target: "google_apis"
-            gradle_target: ":app:connectedFullDebugAndroidTest :app:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest"
-          - api-level: 30
-            arch: x86
-            profile: "tv_4k"
-            target: "android-tv"
-            gradle_target: ":app:connectedFullDebugAndroidTest :app:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest"
+            gradle_target: ":app:connectedFullDebugAndroidTest :app:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest :onboarding:connectedDebugAndroidTest"
           - api-level: 36
             arch: x86_64
             profile: "pixel_7"
             target: "google_apis"
-            gradle_target: ":app:connectedFullDebugAndroidTest :app:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest"
+            gradle_target: ":app:connectedFullDebugAndroidTest :app:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest :onboarding:connectedDebugAndroidTest"
           - api-level: 33
             arch: x86_64
             profile: "automotive_1024p_landscape"
             target: "android-automotive"
-            gradle_target: ":automotive:connectedFullDebugAndroidTest :automotive:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest"
+            gradle_target: ":automotive:connectedFullDebugAndroidTest :automotive:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest :onboarding:connectedDebugAndroidTest"
           - api-level: "34"
             system-image-api-level: "34-ext9"
             arch: x86_64
             profile: "automotive_1024p_landscape"
             target: "android-automotive"
-            gradle_target: ":automotive:connectedFullDebugAndroidTest :automotive:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest"
+            gradle_target: ":automotive:connectedFullDebugAndroidTest :automotive:connectedMinimalDebugAndroidTest :common:connectedDebugAndroidTest :onboarding:connectedDebugAndroidTest"
           - api-level: 26
             arch: x86
             profile: "wearos_square"
@@ -247,14 +276,14 @@ jobs:
             gradle_target: ":wear:connectedDebugAndroidTest :common:connectedDebugAndroidTest"
     steps:
       - name: Delete unnecessary tools 🔧
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           android: false # Don't remove Android tools
           tool-cache: true # Remove image tool cache - rm -rf "$AGENT_TOOLSDIRECTORY"
           docker-images: false # Takes 16s, enable if needed in the future
           large-packages: false # includes google-cloud-sdk and it's slow
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - uses: ./.github/actions/setup-build-env
         with:
@@ -269,7 +298,7 @@ jobs:
           ls /dev/kvm
 
       - name: AVD cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: avd-cache
         with:
           path: |
@@ -279,7 +308,7 @@ jobs:
 
       - name: Create AVD and generate snapshot for caching
         if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
         with:
           api-level: ${{ matrix.configuration.api-level }}
           arch: ${{ matrix.configuration.arch }}
@@ -295,7 +324,7 @@ jobs:
             echo "Generated AVD snapshot for caching."
 
       - name: Build projects and run instrumentation tests
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
         with:
           api-level: ${{ matrix.configuration.api-level }}
           arch: ${{ matrix.configuration.arch }}
@@ -311,7 +340,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: Instrumentation test results (API${{ matrix.configuration.api-level }}) ${{ matrix.configuration.target }}
           path: |
@@ -329,10 +358,10 @@ jobs:
 
     steps:
       - name: Download Artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
 
       - name: Publish Test Results EnricoMi
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@34d7c956a59aed1bfebf31df77b8de55db9bbaaf # v2.21.0
         if: always()
         with:
           comment_mode: "failures"
