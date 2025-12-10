@@ -13,6 +13,9 @@ import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.material.color.DynamicColors
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.homeassistant.companion.android.common.data.integration.Entity
 import io.homeassistant.companion.android.common.data.integration.IntegrationDomains.TODO_DOMAIN
@@ -24,7 +27,6 @@ import io.homeassistant.companion.android.database.widget.TodoWidgetEntity
 import io.homeassistant.companion.android.database.widget.WidgetBackgroundType
 import io.homeassistant.companion.android.widgets.ACTION_APPWIDGET_CREATED
 import io.homeassistant.companion.android.widgets.EXTRA_WIDGET_ENTITY
-import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,12 +39,15 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
-@HiltViewModel
-class TodoWidgetConfigureViewModel @Inject constructor(
+@HiltViewModel(assistedFactory = TodoWidgetConfigureViewModel.Factory::class)
+class TodoWidgetConfigureViewModel @AssistedInject constructor(
     private val todoWidgetDao: TodoWidgetDao,
     private val serverManager: ServerManager,
+    @Assisted preSelectedEntityId: String?,
 ) : ViewModel() {
     private var supportedTextColors: List<String> = emptyList()
     private var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
@@ -65,7 +70,9 @@ class TodoWidgetConfigureViewModel @Inject constructor(
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(500.milliseconds), emptyList())
 
-    var selectedEntityId by mutableStateOf<String?>(null)
+    // We need a mutex since the update of the entities might happen concurrently with onSetup and the viewModel creation
+    private val selectedEntityMutex = Mutex()
+    var selectedEntityId by mutableStateOf<String?>(preSelectedEntityId)
     var selectedBackgroundType by mutableStateOf(
         if (DynamicColors.isDynamicColorAvailable()) {
             WidgetBackgroundType.DYNAMICCOLOR
@@ -77,35 +84,53 @@ class TodoWidgetConfigureViewModel @Inject constructor(
     var showCompletedState by mutableStateOf(true)
     var isUpdateWidget by mutableStateOf(false)
 
+    init {
+        viewModelScope.launch {
+            entities.collect { entities ->
+                selectedEntityMutex.withLock {
+                    if (selectedEntityId == null) {
+                        selectedEntityId = entities.firstOrNull()?.entityId
+                    }
+                }
+            }
+        }
+    }
+
     fun onSetup(widgetId: Int, supportedTextColors: List<String>) {
         this.supportedTextColors = supportedTextColors
-        if (this.widgetId == AppWidgetManager.INVALID_APPWIDGET_ID && selectedEntityId == null) {
-            loadPreviousState(widgetId)
-        }
+        maybeLoadPreviousState(widgetId)
         this.widgetId = widgetId
     }
 
-    private fun loadPreviousState(widgetId: Int) = viewModelScope.launch {
-        todoWidgetDao.get(widgetId)?.let {
-            isUpdateWidget = true
-            selectedServerId = it.serverId
-            selectedEntityId = it.entityId
-            selectedBackgroundType = it.backgroundType
-            val colorIndex = supportedTextColors.indexOf(it.textColor)
-            textColorIndex = if (colorIndex == -1) 0 else colorIndex
-            showCompletedState = it.showCompleted
+    private fun maybeLoadPreviousState(widgetId: Int) = viewModelScope.launch {
+        selectedEntityMutex.withLock {
+            if (this@TodoWidgetConfigureViewModel.widgetId == AppWidgetManager.INVALID_APPWIDGET_ID &&
+                selectedEntityId == null
+            ) {
+                todoWidgetDao.get(widgetId)?.let {
+                    isUpdateWidget = true
+                    selectedServerId = it.serverId
+                    selectedEntityId = it.entityId
+                    selectedBackgroundType = it.backgroundType
+                    val colorIndex = supportedTextColors.indexOf(it.textColor)
+                    textColorIndex = if (colorIndex == -1) 0 else colorIndex
+                    showCompletedState = it.showCompleted
+                }
+            }
         }
     }
 
     fun setServer(serverId: Int) {
         if (selectedServerId == serverId) return
         selectedServerId = serverId
-        selectedEntityId = null
+        viewModelScope.launch { selectedEntityMutex.withLock { selectedEntityId = null } }
     }
 
     suspend fun isValidSelection(): Boolean {
-        return serverManager.getServer(selectedServerId) != null &&
-            selectedEntityId in entities.value.map { it.entityId }
+        selectedEntityMutex.withLock {
+            return serverManager.getServer(selectedServerId) != null &&
+                selectedEntityId in entities.value.map { it.entityId }
+        }
     }
 
     suspend fun updateWidgetConfiguration() {
@@ -131,30 +156,33 @@ class TodoWidgetConfigureViewModel @Inject constructor(
         } else {
             ""
         }
-        val listEntityId = selectedEntityId!!
-        val integrationRepository = serverManager.integrationRepository(selectedServerId)
-        val webSocketRepository = serverManager.webSocketRepository(selectedServerId)
-        val name = integrationRepository.getEntity(listEntityId)?.friendlyName
-        val todos = webSocketRepository.getTodos(listEntityId)?.response?.get(listEntityId)?.items.orEmpty()
+        selectedEntityMutex.withLock {
+            val listEntityId = selectedEntityId!!
 
-        return TodoWidgetEntity(
-            id = widgetId,
-            serverId = selectedServerId,
-            entityId = selectedEntityId!!,
-            backgroundType = selectedBackgroundType,
-            textColor = textColor,
-            showCompleted = showCompletedState,
-            latestUpdateData = TodoWidgetEntity.LastUpdateData(
-                entityName = name,
-                todos = todos.map {
-                    TodoWidgetEntity.TodoItem(
-                        uid = it.uid,
-                        summary = it.summary,
-                        status = it.status,
-                    )
-                },
-            ),
-        )
+            val integrationRepository = serverManager.integrationRepository(selectedServerId)
+            val webSocketRepository = serverManager.webSocketRepository(selectedServerId)
+            val name = integrationRepository.getEntity(listEntityId)?.friendlyName
+            val todos = webSocketRepository.getTodos(listEntityId)?.response?.get(listEntityId)?.items.orEmpty()
+
+            return TodoWidgetEntity(
+                id = widgetId,
+                serverId = selectedServerId,
+                entityId = selectedEntityId!!,
+                backgroundType = selectedBackgroundType,
+                textColor = textColor,
+                showCompleted = showCompletedState,
+                latestUpdateData = TodoWidgetEntity.LastUpdateData(
+                    entityName = name,
+                    todos = todos.map {
+                        TodoWidgetEntity.TodoItem(
+                            uid = it.uid,
+                            summary = it.summary,
+                            status = it.status,
+                        )
+                    },
+                ),
+            )
+        }
     }
 
     /**
@@ -191,5 +219,10 @@ class TodoWidgetConfigureViewModel @Inject constructor(
             val glanceId = GlanceAppWidgetManager(appContext).getGlanceIdBy(widgetId)
             TodoGlanceAppWidget().update(appContext, glanceId)
         }
+    }
+
+    @AssistedFactory
+    interface Factory {
+        fun create(preSelectedEntityId: String?): TodoWidgetConfigureViewModel
     }
 }

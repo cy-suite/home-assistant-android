@@ -26,20 +26,23 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
             extensions.getByType<ApplicationExtension>().apply {
                 dependencies {
                     "implementation"(project(":common"))
+                    "debugImplementation"(project(":onboarding"))
 
                     "implementation"(libs.blurView)
                     "implementation"(libs.haze)
                     "implementation"(libs.haze.materials)
-                    "fullImplementation"(libs.androidx.health.connect.client)
+                    "implementation"(libs.androidx.health.connect.client)
 
                     "implementation"(libs.kotlin.stdlib)
                     "implementation"(libs.kotlin.reflect)
                     "implementation"(libs.kotlinx.coroutines.core)
                     "implementation"(libs.kotlinx.coroutines.android)
+                    "implementation"(libs.androidx.concurrent.ktx)
                     "fullImplementation"(libs.kotlinx.coroutines.play.services)
 
                     "implementation"(libs.appcompat)
                     "implementation"(libs.androidx.lifecycle.runtime.ktx)
+                    "implementation"(libs.androidx.lifecycle.service)
                     "implementation"(libs.constraintlayout)
                     "implementation"(libs.recyclerview)
                     "implementation"(libs.preference.ktx)

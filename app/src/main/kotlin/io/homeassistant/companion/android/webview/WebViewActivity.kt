@@ -47,6 +47,9 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AlertDialog
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,10 +87,21 @@ import io.homeassistant.companion.android.common.data.keychain.KeyChainRepositor
 import io.homeassistant.companion.android.common.data.keychain.NamedKeyChain
 import io.homeassistant.companion.android.common.data.prefs.NightModeTheme
 import io.homeassistant.companion.android.common.data.servers.ServerManager
+import io.homeassistant.companion.android.common.util.AppVersionProvider
 import io.homeassistant.companion.android.common.util.DisabledLocationHandler
+import io.homeassistant.companion.android.common.util.FailFast
 import io.homeassistant.companion.android.common.util.GestureAction
 import io.homeassistant.companion.android.common.util.GestureDirection
+import io.homeassistant.companion.android.common.util.getBooleanOrElse
+import io.homeassistant.companion.android.common.util.getBooleanOrNull
+import io.homeassistant.companion.android.common.util.getIntOrElse
+import io.homeassistant.companion.android.common.util.getIntOrNull
+import io.homeassistant.companion.android.common.util.getStringOrElse
+import io.homeassistant.companion.android.common.util.getStringOrNull
 import io.homeassistant.companion.android.common.util.isAutomotive
+import io.homeassistant.companion.android.common.util.jsonObjectOrNull
+import io.homeassistant.companion.android.common.util.toJsonObject
+import io.homeassistant.companion.android.common.util.toJsonObjectOrNull
 import io.homeassistant.companion.android.database.authentication.Authentication
 import io.homeassistant.companion.android.database.authentication.AuthenticationDao
 import io.homeassistant.companion.android.databinding.DialogAuthenticationBinding
@@ -109,7 +123,11 @@ import io.homeassistant.companion.android.util.compose.initializePlayer
 import io.homeassistant.companion.android.util.isStarted
 import io.homeassistant.companion.android.websocket.WebsocketManager
 import io.homeassistant.companion.android.webview.WebView.ErrorType
+import io.homeassistant.companion.android.webview.addto.EntityAddToHandler
+import io.homeassistant.companion.android.webview.externalbus.EntityAddToActionsResponse
 import io.homeassistant.companion.android.webview.externalbus.ExternalBusMessage
+import io.homeassistant.companion.android.webview.externalbus.ExternalConfigResponse
+import io.homeassistant.companion.android.webview.externalbus.ExternalEntityAddToAction
 import io.homeassistant.companion.android.webview.externalbus.NavigateTo
 import io.homeassistant.companion.android.webview.externalbus.ShowSidebar
 import javax.inject.Inject
@@ -120,8 +138,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import org.json.JSONObject
 import timber.log.Timber
 
 @AndroidEntryPoint
@@ -208,6 +227,12 @@ class WebViewActivity :
     @NamedKeyChain
     lateinit var keyChainRepository: KeyChainRepository
 
+    @Inject
+    lateinit var appVersionProvider: AppVersionProvider
+
+    @Inject
+    lateinit var entityAddToHandler: EntityAddToHandler
+
     private lateinit var webView: WebView
     private lateinit var loadedUrl: String
     private lateinit var decor: FrameLayout
@@ -238,11 +263,13 @@ class WebViewActivity :
     private var clearHistory = false
     private var moreInfoEntity = ""
     private val moreInfoMutex = Mutex()
-    private var currentAutoplay: Boolean = false
+    private var currentAutoplay: Boolean? = null
     private var downloadFileUrl = ""
     private var downloadFileContentDisposition = ""
     private var downloadFileMimetype = ""
     private val javascriptInterface = "externalApp"
+
+    private val snackbarHostState = SnackbarHostState()
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -291,6 +318,7 @@ class WebViewActivity :
             val statusBarColor by remember { statusBarColor }
             val backgroundColor by remember { backgroundColor }
             var nightModeTheme by remember { mutableStateOf<NightModeTheme?>(null) }
+            val snackbarHostState = remember { snackbarHostState }
 
             LaunchedEffect(Unit) {
                 nightModeTheme = nightModeManager.getCurrentNightMode()
@@ -299,6 +327,7 @@ class WebViewActivity :
             WebViewContentScreen(
                 webView,
                 player,
+                snackbarHostState = snackbarHostState,
                 playerSize = playerSize,
                 playerTop = playerTop,
                 playerLeft = playerLeft,
@@ -351,7 +380,12 @@ class WebViewActivity :
                 },
             )
 
-            settings.mediaPlaybackRequiresUserGesture = !presenter.isAutoPlayVideoEnabled()
+            lifecycleScope.launch {
+                currentAutoplay = presenter.isAutoPlayVideoEnabled().apply {
+                    settings.mediaPlaybackRequiresUserGesture = !this
+                }
+            }
+
             webViewClient = object : TLSWebViewClient(keyChainRepository) {
                 @Deprecated("Deprecated in Java for SDK >= 23")
                 override fun onReceivedError(
@@ -438,13 +472,17 @@ class WebViewActivity :
                     resourceURL = url!!
                 }
 
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                    request?.url?.let {
+                // Override deprecated method for backward compatibility with API 23 and below.
+                // The non-deprecated shouldOverrideUrlLoading(WebView, WebResourceRequest) is not invoked
+                // on these older Android versions, so this method remains necessary.
+                @Suppress("DEPRECATION")
+                override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                    url?.let {
                         try {
-                            if (it.toString().startsWith(APP_PREFIX)) {
+                            if (it.startsWith(APP_PREFIX)) {
                                 Timber.d("Launching the app")
                                 val intent = packageManager.getLaunchIntentForPackage(
-                                    it.toString().substringAfter(APP_PREFIX),
+                                    it.substringAfter(APP_PREFIX),
                                 )
                                 if (intent != null) {
                                     intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -453,14 +491,14 @@ class WebViewActivity :
                                     Timber.w("No intent to launch app found, opening app store")
                                     val marketIntent = Intent(Intent.ACTION_VIEW)
                                     marketIntent.data =
-                                        (MARKET_PREFIX + it.toString().substringAfter(APP_PREFIX)).toUri()
+                                        (MARKET_PREFIX + it.substringAfter(APP_PREFIX)).toUri()
                                     startActivity(marketIntent)
                                 }
                                 return true
-                            } else if (it.toString().startsWith(INTENT_PREFIX)) {
+                            } else if (it.startsWith(INTENT_PREFIX)) {
                                 Timber.d("Launching the intent")
                                 val intent =
-                                    Intent.parseUri(it.toString(), Intent.URI_INTENT_SCHEME)
+                                    Intent.parseUri(it, Intent.URI_INTENT_SCHEME)
                                 val intentPackage = intent.`package`?.let { it1 ->
                                     packageManager.getLaunchIntentForPackage(
                                         it1,
@@ -476,9 +514,9 @@ class WebViewActivity :
                                     startActivity(intent)
                                 }
                                 return true
-                            } else if (!webView.url.toString().contains(it.toString())) {
+                            } else if (!webView.url.toString().contains(it)) {
                                 Timber.d("Launching browser")
-                                val browserIntent = Intent(Intent.ACTION_VIEW, it)
+                                val browserIntent = Intent(Intent.ACTION_VIEW, it.toUri())
                                 startActivity(browserIntent)
                                 return true
                             } else {
@@ -499,8 +537,7 @@ class WebViewActivity :
             }
 
             setDownloadListener { url, _, contentDisposition, mimetype, _ ->
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
                     ActivityCompat.checkSelfPermission(
                         context,
                         android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
@@ -530,43 +567,38 @@ class WebViewActivity :
                 }
 
                 override fun onPermissionRequest(request: PermissionRequest?) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        val alreadyGranted = ArrayList<String>()
-                        val toBeGranted = ArrayList<String>()
-                        request?.resources?.forEach {
-                            if (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE) {
-                                if (ActivityCompat.checkSelfPermission(
-                                        context,
-                                        android.Manifest.permission.CAMERA,
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    alreadyGranted.add(it)
-                                } else {
-                                    toBeGranted.add(android.Manifest.permission.CAMERA)
-                                }
-                            } else if (it == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
-                                if (ActivityCompat.checkSelfPermission(
-                                        context,
-                                        android.Manifest.permission.RECORD_AUDIO,
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    alreadyGranted.add(it)
-                                } else {
-                                    toBeGranted.add(android.Manifest.permission.RECORD_AUDIO)
-                                }
+                    val alreadyGranted = ArrayList<String>()
+                    val toBeGranted = ArrayList<String>()
+                    request?.resources?.forEach {
+                        if (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE) {
+                            if (ActivityCompat.checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.CAMERA,
+                                ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                alreadyGranted.add(it)
+                            } else {
+                                toBeGranted.add(android.Manifest.permission.CAMERA)
+                            }
+                        } else if (it == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
+                            if (ActivityCompat.checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.RECORD_AUDIO,
+                                ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+                                alreadyGranted.add(it)
+                            } else {
+                                toBeGranted.add(android.Manifest.permission.RECORD_AUDIO)
                             }
                         }
-                        if (alreadyGranted.size > 0) {
-                            request?.grant(alreadyGranted.toTypedArray())
-                        }
-                        if (toBeGranted.size > 0) {
-                            requestPermissions.launch(
-                                toBeGranted.toTypedArray(),
-                            )
-                        }
-                    } else {
-                        // If we are before M we already have permission, just grant it.
-                        request?.grant(request.resources)
+                    }
+                    if (alreadyGranted.isNotEmpty()) {
+                        request?.grant(alreadyGranted.toTypedArray())
+                    }
+                    if (toBeGranted.isNotEmpty()) {
+                        requestPermissions.launch(
+                            toBeGranted.toTypedArray(),
+                        )
                     }
                 }
 
@@ -588,8 +620,10 @@ class WebViewActivity :
 
                 override fun onHideCustomView() {
                     customViewFromWebView.value = null
-                    if (!presenter.isFullScreen()) {
-                        showSystemUI()
+                    lifecycleScope.launch {
+                        if (!presenter.isFullScreen()) {
+                            showSystemUI()
+                        }
                     }
                     isVideoFullScreen = false
                     super.onHideCustomView()
@@ -605,17 +639,13 @@ class WebViewActivity :
 
         window.decorView.setOnSystemUiVisibilityChangeListener { visibility ->
             if (visibility and View.SYSTEM_UI_FLAG_FULLSCREEN == 0) {
-                if (presenter.isFullScreen()) {
-                    hideSystemUI()
+                lifecycleScope.launch {
+                    if (presenter.isFullScreen()) {
+                        hideSystemUI()
+                    }
                 }
             }
         }
-
-        if (presenter.isKeepScreenOnEnabled()) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-
-        currentAutoplay = presenter.isAutoPlayVideoEnabled()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val webviewPackage = WebViewCompat.getCurrentWebViewPackage(this)
@@ -625,6 +655,10 @@ class WebViewActivity :
         }
 
         lifecycleScope.launch {
+            if (presenter.isKeepScreenOnEnabled()) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 presenter.getMatterThreadStepFlow().collect {
                     Timber.d("Matter/Thread step changed to $it")
@@ -709,18 +743,18 @@ class WebViewActivity :
 
                     @JavascriptInterface
                     fun getExternalAuth(payload: String) {
-                        JSONObject(payload).let {
+                        payload.toJsonObjectOrNull().let {
                             presenter.onGetExternalAuth(
                                 this@WebViewActivity,
-                                it.getString("callback"),
-                                it.has("force") && it.getBoolean("force"),
+                                it?.getStringOrNull("callback") ?: "",
+                                it?.getBooleanOrNull("force") ?: false,
                             )
                         }
                     }
 
                     @JavascriptInterface
                     fun revokeExternalAuth(callback: String) {
-                        presenter.onRevokeExternalAuth(JSONObject(callback).get("callback") as String)
+                        presenter.onRevokeExternalAuth(callback.toJsonObjectOrNull()?.getStringOrNull("callback") ?: "")
                         isRelaunching = true // Prevent auth errors from showing
                     }
 
@@ -728,11 +762,11 @@ class WebViewActivity :
                     fun externalBus(message: String) {
                         Timber.d("External bus $message")
                         webView.post {
-                            val json = JSONObject(message)
-                            when (json.get("type")) {
+                            val json = message.toJsonObjectOrNull() ?: return@post
+                            when (json.getStringOrNull("type")) {
                                 "connection-status" -> {
-                                    isConnected = json.getJSONObject("payload")
-                                        .getString("event") == "connected"
+                                    isConnected = json["payload"]?.jsonObjectOrNull()
+                                        ?.getStringOrNull("event") == "connected"
                                     if (isConnected) {
                                         alertDialog?.cancel()
                                         presenter.checkSecurityVersion()
@@ -754,25 +788,13 @@ class WebViewActivity :
                                             0
                                         }
                                     sendExternalBusMessage(
-                                        ExternalBusMessage(
-                                            id = JSONObject(message).get("id"),
-                                            type = "result",
-                                            success = true,
-                                            result = JSONObject(
-                                                mapOf(
-                                                    "hasSettingsScreen" to true,
-                                                    "canWriteTag" to hasNfc,
-                                                    "hasExoPlayer" to true,
-                                                    "canCommissionMatter" to canCommissionMatter,
-                                                    "canImportThreadCredentials" to canExportThread,
-                                                    "hasAssist" to true,
-                                                    "hasBarCodeScanner" to hasBarCodeScanner,
-                                                    "canSetupImprov" to true,
-                                                ),
-                                            ),
-                                            callback = {
-                                                Timber.d("Callback $it")
-                                            },
+                                        ExternalConfigResponse(
+                                            id = json["id"],
+                                            hasNfc = hasNfc,
+                                            canCommissionMatter = canCommissionMatter,
+                                            canExportThread = canExportThread,
+                                            hasBarCodeScanner = hasBarCodeScanner,
+                                            appVersion = appVersionProvider(),
                                         ),
                                     )
 
@@ -791,25 +813,13 @@ class WebViewActivity :
                                 }
 
                                 "assist/show" -> {
-                                    val payload = if (json.has("payload")) json.getJSONObject("payload") else null
+                                    val payload = json["payload"]?.jsonObjectOrNull()
                                     startActivity(
                                         AssistActivity.newInstance(
                                             this@WebViewActivity,
                                             serverId = presenter.getActiveServer(),
-                                            pipelineId = if (payload?.has("pipeline_id") ==
-                                                true
-                                            ) {
-                                                payload.getString("pipeline_id")
-                                            } else {
-                                                null
-                                            },
-                                            startListening = if (payload?.has("start_listening") ==
-                                                true
-                                            ) {
-                                                payload.getBoolean("start_listening")
-                                            } else {
-                                                true
-                                            },
+                                            pipelineId = payload?.getStringOrNull("pipeline_id"),
+                                            startListening = payload?.getBooleanOrNull("start_listening") ?: true,
                                         ),
                                     )
                                 }
@@ -822,8 +832,8 @@ class WebViewActivity :
                                 "tag/write" ->
                                     writeNfcTag.launch(
                                         WriteNfcTag.Input(
-                                            tagId = json.getJSONObject("payload").getString("tag"),
-                                            messageId = JSONObject(message).getInt("id"),
+                                            tagId = json["payload"]?.jsonObjectOrNull()?.getStringOrNull("tag"),
+                                            messageId = json.getIntOrElse("id", -1),
                                         ),
                                     )
 
@@ -838,22 +848,19 @@ class WebViewActivity :
                                 }
 
                                 "bar_code/scan" -> {
-                                    val payload = if (json.has("payload")) json.getJSONObject("payload") else null
-                                    if (payload?.has("title") != true || !payload.has("description")) return@post
+                                    val payload = json["payload"]?.jsonObjectOrNull()
+                                    if (payload?.containsKey("title") != true ||
+                                        !payload.containsKey("description")
+                                    ) {
+                                        return@post
+                                    }
                                     startActivity(
                                         BarcodeScannerActivity.newInstance(
                                             this@WebViewActivity,
-                                            messageId = json.getInt("id"),
-                                            title = payload.getString("title"),
-                                            subtitle = payload.getString("description"),
-                                            action = if (payload.has(
-                                                    "alternative_option_label",
-                                                )
-                                            ) {
-                                                payload.getString("alternative_option_label").ifBlank {
-                                                    null
-                                                }
-                                            } else {
+                                            messageId = json.getIntOrElse("id", 0),
+                                            title = payload.getStringOrElse("title", ""),
+                                            subtitle = payload.getStringOrElse("description", ""),
+                                            action = payload.getStringOrNull("alternative_option_label")?.ifBlank {
                                                 null
                                             },
                                         ),
@@ -862,16 +869,20 @@ class WebViewActivity :
 
                                 "improv/scan" -> scanForImprov()
                                 "improv/configure_device" -> {
-                                    val payload = if (json.has("payload")) json.getJSONObject("payload") else null
-                                    if (payload?.has("name") != true) return@post
-                                    configureImprovDevice(payload.getString("name"))
+                                    val payload = json["payload"]?.jsonObjectOrNull()
+                                    val deviceName = payload?.getStringOrNull("name") ?: return@post
+                                    configureImprovDevice(deviceName)
                                 }
 
                                 "exoplayer/play_hls" -> exoPlayHls(json)
                                 "exoplayer/stop" -> exoStopHls()
                                 "exoplayer/resize" -> exoResizeHls(json)
-                                "haptic" -> processHaptic(json.getJSONObject("payload").getString("hapticType"))
+                                "haptic" -> processHaptic(
+                                    json["payload"]?.jsonObjectOrNull()?.getStringOrNull("hapticType") ?: "",
+                                )
                                 "theme-update" -> getAndSetStatusBarNavigationBarColors()
+                                "entity/add_to/get_actions" -> getActions(json)
+                                "entity/add_to" -> addEntityTo(json)
                                 else -> presenter.onExternalBusMessage(json)
                             }
                         }
@@ -893,6 +904,46 @@ class WebViewActivity :
                 },
                 javascriptInterface,
             )
+        }
+    }
+
+    private fun addEntityTo(json: JsonObject) {
+        val payload = json["payload"]?.jsonObjectOrNull()
+        val entityId = payload?.getStringOrNull("entity_id")
+        val appPayload = payload?.getStringOrNull("app_payload")
+        if (entityId != null && appPayload != null) {
+            val action = ExternalEntityAddToAction.appPayloadToAction(appPayload)
+            lifecycleScope.launch {
+                entityAddToHandler.execute(this@WebViewActivity, action, entityId) { message, action ->
+                    snackbarHostState.showSnackbar(
+                        message,
+                        action,
+                        duration = SnackbarDuration.Short,
+                    ) == SnackbarResult.ActionPerformed
+                }
+            }
+        } else {
+            FailFast.fail { "Missing entity_id or app_payload to addEntityTo" }
+        }
+    }
+
+    private fun getActions(json: JsonObject) {
+        val payload = json["payload"]?.jsonObjectOrNull()
+        val entityId = payload?.getStringOrNull("entity_id")
+        entityId?.let {
+            lifecycleScope.launch {
+                val actions = entityAddToHandler.actionsForEntity(this@WebViewActivity, entityId)
+                sendExternalBusMessage(
+                    EntityAddToActionsResponse(
+                        id = json["id"],
+                        actions = actions.map { action ->
+                            ExternalEntityAddToAction.fromAction(this@WebViewActivity, action)
+                        },
+                    ),
+                )
+            }
+        } ?: FailFast.fail {
+            "entity_id not present in response from External bus for `entity/add_to/get_actions`"
         }
     }
 
@@ -1003,43 +1054,47 @@ class WebViewActivity :
 
     override fun onResume() {
         super.onResume()
-        if (currentAutoplay != presenter.isAutoPlayVideoEnabled()) {
-            recreate()
-        }
-
         lifecycleScope.launch {
+            // if null it means that the settings were not yet read so we should not recreate
+            if (currentAutoplay != null && currentAutoplay != presenter.isAutoPlayVideoEnabled()) {
+                recreate()
+            }
+
             appLocked.value = presenter.isAppLocked()
             presenter.updateActiveServer()
         }
 
         setWebViewZoom()
 
-        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG || presenter.isWebViewDebugEnabled())
-
-        requestedOrientation = when (presenter.getScreenOrientation()) {
-            getString(
-                R.string.screen_orientation_option_array_value_portrait,
-            ),
-            -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            getString(
-                R.string.screen_orientation_option_array_value_landscape,
-            ),
-            -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-
-        if (presenter.isKeepScreenOnEnabled()) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        } else {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-
-        SensorWorker.start(this)
-        WebsocketManager.start(this)
         lifecycleScope.launch {
+            SensorWorker.start(this@WebViewActivity)
+            WebsocketManager.start(this@WebViewActivity)
+
+            WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG || presenter.isWebViewDebugEnabled())
+
+            requestedOrientation = when (presenter.getScreenOrientation()) {
+                getString(
+                    R.string.screen_orientation_option_array_value_portrait,
+                ),
+                -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
+                getString(
+                    R.string.screen_orientation_option_array_value_landscape,
+                ),
+                -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+
+                else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+
+            if (presenter.isKeepScreenOnEnabled()) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+
             checkAndWarnForDisabledLocation()
+            changeLog.showChangeLog(this@WebViewActivity, false)
         }
-        changeLog.showChangeLog(this, false)
 
         if (::loadedUrl.isInitialized) {
             waitForConnection()
@@ -1048,12 +1103,16 @@ class WebViewActivity :
 
     override fun onStop() {
         super.onStop()
-        openFirstViewOnDashboardIfNeeded()
+        lifecycleScope.launch {
+            openFirstViewOnDashboardIfNeeded()
+        }
     }
 
     override fun onPause() {
         super.onPause()
-        presenter.setAppActive(false)
+        lifecycleScope.launch {
+            presenter.setAppActive(false)
+        }
         if (!isFinishing && !isRelaunching) SensorReceiver.updateAllSensors(this)
     }
 
@@ -1067,7 +1126,7 @@ class WebViewActivity :
         for (manager in SensorReceiver.MANAGERS) {
             for (basicSensor in manager.getAvailableSensors(this)) {
                 if (manager.isEnabled(this, basicSensor)) {
-                    val permissions = manager.requiredPermissions(basicSensor.id)
+                    val permissions = manager.requiredPermissions(this, basicSensor.id)
 
                     val fineLocation = DisabledLocationHandler.containsLocationPermission(permissions, true)
                     val coarseLocation = DisabledLocationHandler.containsLocationPermission(permissions, false)
@@ -1091,10 +1150,10 @@ class WebViewActivity :
         }
     }
 
-    fun exoPlayHls(json: JSONObject) {
-        val payload = json.getJSONObject("payload")
-        val uri = payload.getString("url").toUri()
-        val isMuted = payload.optBoolean("muted")
+    fun exoPlayHls(json: JsonObject) {
+        val payload = json["payload"]?.jsonObjectOrNull()
+        val uri = payload?.getStringOrNull("url")?.toUri() ?: return
+        val isMuted = payload.getBooleanOrElse("muted", false)
         runOnUiThread {
             exoPlayer.value = initializePlayer(this).apply {
                 setMediaItem(MediaItem.fromUri(uri))
@@ -1119,7 +1178,7 @@ class WebViewActivity :
         }
         sendExternalBusMessage(
             ExternalBusMessage(
-                id = json.get("id"),
+                id = json["id"],
                 type = "result",
                 success = true,
                 callback = {
@@ -1144,27 +1203,28 @@ class WebViewActivity :
     }
 
     @OptIn(UnstableApi::class)
-    fun exoResizeHls(json: JSONObject) {
-        val payload = json.getJSONObject("payload")
+    fun exoResizeHls(json: JsonObject) {
+        val payload = json["payload"]?.jsonObjectOrNull() ?: return
         // Payload is https://developer.mozilla.org/en-US/docs/Web/API/Element/getBoundingClientRect
         // The values are already scaled to the screen.
         // We only need to store the top left corner for the offset and the player size
 
-        val left = payload.getInt("left")
-        val top = payload.getInt("top")
-        val right = payload.getInt("right")
+        val left = payload.getIntOrElse("left", 0)
+        val top = payload.getIntOrElse("top", 0)
+        val right = payload.getIntOrElse("right", 0)
         // if the bottom value is not 0 we should take it it is a constraint from the frontend, otherwise we try to compute the
         // height based on the video's aspect ratio if available.
-        val bottom = payload.getInt("bottom").takeIf { it > 0 } ?: exoPlayer.value?.videoFormat?.let { videoFormat ->
-            if (videoFormat.width > 0) {
-                // Calculate height of the video based on aspect ratio
-                val width = right - left
-                val videoHeight = width * videoFormat.height / videoFormat.width
-                (top + videoHeight)
-            } else {
-                payload.getInt("bottom")
-            }
-        } ?: payload.getInt("bottom")
+        val bottom =
+            payload.getIntOrNull("bottom")?.takeIf { it > 0 } ?: exoPlayer.value?.videoFormat?.let { videoFormat ->
+                if (videoFormat.width > 0) {
+                    // Calculate height of the video based on aspect ratio
+                    val width = right - left
+                    val videoHeight = width * videoFormat.height / videoFormat.width
+                    (top + videoHeight)
+                } else {
+                    payload.getIntOrNull("bottom")
+                }
+            } ?: payload.getIntOrElse("bottom", 0)
 
         playerTop.value = top.dp
         playerLeft.value = left.dp
@@ -1231,7 +1291,9 @@ class WebViewActivity :
             Authenticator.SUCCESS -> {
                 Timber.d("Authentication successful, unlocking app")
                 appLocked.value = false
-                presenter.setAppActive(true)
+                lifecycleScope.launch {
+                    presenter.setAppActive(true)
+                }
             }
 
             Authenticator.CANCELED -> {
@@ -1297,7 +1359,9 @@ class WebViewActivity :
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        presenter.setAppActive(false)
+        lifecycleScope.launch {
+            presenter.setAppActive(false)
+        }
         videoHeight = decor.height
         val bounds = Rect(0, 0, 1920, 1080)
         if (isVideoFullScreen or isExoFullScreen) {
@@ -1636,11 +1700,11 @@ class WebViewActivity :
         message.result?.let { map["result"] = it }
         message.error?.let { map["error"] = it }
         message.payload?.let { map["payload"] = it }
-
-        val json = JSONObject(map.toMap())
+        val jsonObject = map.toJsonObject()
+        val json = Json.encodeToString(jsonObject)
         val script = "externalBus($json);"
 
-        Timber.d(script)
+        Timber.d("Sending: $script")
 
         webView.evaluateJavascript(script, message.callback)
     }
@@ -1654,14 +1718,14 @@ class WebViewActivity :
             }
 
             "http", "https" -> {
-                val request = DownloadManager.Request(uri)
-                    .setMimeType(mimetype)
-                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                    .setDestinationInExternalPublicDir(
-                        Environment.DIRECTORY_DOWNLOADS,
-                        URLUtil.guessFileName(url, contentDisposition, mimetype),
-                    )
-                lifecycleScope.launch {
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val request = DownloadManager.Request(uri)
+                        .setMimeType(mimetype)
+                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        .setDestinationInExternalPublicDir(
+                            Environment.DIRECTORY_DOWNLOADS,
+                            URLUtil.guessFileName(url, contentDisposition, mimetype),
+                        )
                     val server = serverManager.getServer(presenter.getActiveServer())
                     if (url.startsWith(server?.connection?.getUrl(true).toString()) ||
                         url.startsWith(server?.connection?.getUrl(false).toString())
@@ -1754,7 +1818,7 @@ class WebViewActivity :
         return super.dispatchKeyEvent(event)
     }
 
-    private fun setWebViewZoom() {
+    private fun setWebViewZoom() = lifecycleScope.launch {
         // Set base zoom level (percentage must be scaled to device density/percentage)
         webView.setInitialScale((resources.displayMetrics.density * presenter.getPageZoomLevel()).toInt())
 
@@ -1780,13 +1844,13 @@ class WebViewActivity :
                     viewport['content'] = elements.join(',');
                 } else {
                     viewport['content'] = original_elements;
-                }           
+                }
             }
             """,
         ) {}
     }
 
-    private fun openFirstViewOnDashboardIfNeeded() {
+    private suspend fun openFirstViewOnDashboardIfNeeded() {
         if (presenter.isAlwaysShowFirstViewOnAppStartEnabled() &&
             LifecycleHandler.isAppInBackground()
         ) {

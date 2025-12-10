@@ -1,9 +1,7 @@
 package io.homeassistant.companion.android.settings.websocket
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
@@ -15,13 +13,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
-import androidx.core.content.getSystemService
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import dagger.hilt.android.AndroidEntryPoint
 import io.homeassistant.companion.android.common.R as commonR
 import io.homeassistant.companion.android.common.data.network.WifiHelper
+import io.homeassistant.companion.android.common.util.isIgnoringBatteryOptimizations
 import io.homeassistant.companion.android.settings.SettingViewModel
 import io.homeassistant.companion.android.settings.SettingViewModel.Companion.DEFAULT_WEBSOCKET_SETTING
 import io.homeassistant.companion.android.settings.addHelpMenuProvider
@@ -69,14 +67,12 @@ class WebsocketSettingFragment : Fragment() {
                         hasWifi = wifiHelper.hasWifi(),
                         onSettingChanged = { viewModel.updateWebsocketSetting(serverId, it) },
                         onBackgroundAccessTapped = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                requestBackgroundAccessResult.launch(
-                                    Intent(
-                                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                                        "package:${activity?.packageName}".toUri(),
-                                    ),
-                                )
-                            }
+                            requestBackgroundAccessResult.launch(
+                                Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    "package:${activity?.packageName}".toUri(),
+                                ),
+                            )
                         },
                     )
                 }
@@ -95,9 +91,6 @@ class WebsocketSettingFragment : Fragment() {
     }
 
     private fun setIgnoringBatteryOptimizations() {
-        isIgnoringBatteryOptimizations = Build.VERSION.SDK_INT <= Build.VERSION_CODES.M ||
-            context?.getSystemService<PowerManager>()
-                ?.isIgnoringBatteryOptimizations(requireActivity().packageName)
-                ?: false
+        isIgnoringBatteryOptimizations = context?.isIgnoringBatteryOptimizations() == true
     }
 }
