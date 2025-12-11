@@ -36,12 +36,25 @@ jobs:
       - name: Merge Upstream Changes
         run: |
           git checkout main
-          git merge upstream/main --no-edit --allow-unrelated-histories || echo "Merge failed or no changes to merge"
+          # Check if there are changes to merge
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "Already up to date with upstream"
+          else
+            echo "Merging upstream changes..."
+            if ! git merge upstream/main --no-edit --allow-unrelated-histories; then
+              echo "::error::Merge failed - manual intervention required"
+              exit 1
+            fi
+          fi
 
       - name: Push Changes
         run: |
-          git push origin main --force-with-lease || true
+          echo "Pushing changes to origin..."
+          git push origin main --force-with-lease
 
       - name: Push Tags
         run: |
+          echo "Pushing tags to origin..."
           git push origin --tags --force

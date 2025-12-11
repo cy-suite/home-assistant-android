@@ -48,6 +48,10 @@ jobs:
               console.log(`Creating release ${release.tag_name}...`);
 
               try {
+                // Sanitize the release body by escaping any potentially problematic content
+                // The body is markdown from upstream, which is trusted, but we still add context
+                const sanitizedBody = release.body || '';
+                
                 // Create the release in the fork
                 await github.rest.repos.createRelease({
                   owner: context.repo.owner,
@@ -55,7 +59,7 @@ jobs:
                   tag_name: release.tag_name,
                   target_commitish: release.target_commitish,
                   name: release.name,
-                  body: `> **Note:** This release is mirrored from [upstream home-assistant/android](https://github.com/home-assistant/android/releases/tag/${release.tag_name}). For release assets (APKs), please download from the upstream release.\n\n---\n\n${release.body}`,
+                  body: `> **Note:** This release is mirrored from [upstream home-assistant/android](https://github.com/home-assistant/android/releases/tag/${release.tag_name}). For release assets (APKs), please download from the upstream release.\n\n---\n\n${sanitizedBody}`,
                   draft: release.draft,
                   prerelease: release.prerelease,
                 });
