@@ -15,9 +15,9 @@ import com.mikepenz.iconics.utils.toAndroidIconCompat
 import io.homeassistant.companion.android.common.R
 import io.homeassistant.companion.android.common.data.integration.Entity
 import io.homeassistant.companion.android.common.data.integration.IntegrationDomains.CAMERA_DOMAIN
+import io.homeassistant.companion.android.common.data.integration.IntegrationDomains.CLIMATE_DOMAIN
 import io.homeassistant.companion.android.common.data.integration.IntegrationDomains.MEDIA_PLAYER_DOMAIN
 import io.homeassistant.companion.android.common.data.integration.IntegrationRepository
-import io.homeassistant.companion.android.common.data.integration.domain
 import io.homeassistant.companion.android.common.data.integration.friendlyState
 import io.homeassistant.companion.android.common.data.integration.getIcon
 import io.homeassistant.companion.android.common.data.integration.isActive
@@ -72,12 +72,15 @@ interface HaControl {
                 val colorTint = when {
                     entity.domain == "light" && entity.state == "on" -> R.color.colorDeviceControlsLightOn
                     entity.domain == CAMERA_DOMAIN -> R.color.colorDeviceControlsCamera
-                    entity.domain == "climate" && entity.state == "heat" -> R.color.colorDeviceControlsThermostatHeat
+                    entity.domain == CLIMATE_DOMAIN && entity.state == "heat"
+                    -> R.color.colorDeviceControlsThermostatHeat
+
                     entity.state in listOf(
                         "off",
                         "unavailable",
                         "unknown",
                     ) -> R.color.colorDeviceControlsOff
+
                     else -> R.color.colorDeviceControlsDefaultOn
                 }
 

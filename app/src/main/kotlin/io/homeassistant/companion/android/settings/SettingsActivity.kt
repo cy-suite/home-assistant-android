@@ -7,6 +7,7 @@ import android.os.Parcelable
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.core.content.IntentCompat
 import androidx.fragment.app.commit
@@ -22,16 +23,17 @@ import io.homeassistant.companion.android.R
 import io.homeassistant.companion.android.authenticator.Authenticator
 import io.homeassistant.companion.android.common.R as commonR
 import io.homeassistant.companion.android.common.data.servers.ServerManager
+import io.homeassistant.companion.android.settings.assist.AssistSettingsFragment
 import io.homeassistant.companion.android.settings.developer.DeveloperSettingsFragment
 import io.homeassistant.companion.android.settings.notification.NotificationHistoryFragment
 import io.homeassistant.companion.android.settings.qs.ManageTilesFragment
 import io.homeassistant.companion.android.settings.sensor.SensorDetailFragment
 import io.homeassistant.companion.android.settings.server.ServerSettingsFragment
+import io.homeassistant.companion.android.settings.ssid.SsidFragment
 import io.homeassistant.companion.android.settings.websocket.WebsocketSettingFragment
 import io.homeassistant.companion.android.util.applySafeDrawingInsets
 import javax.inject.Inject
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.parcelize.Parcelize
 import timber.log.Timber
 
@@ -42,6 +44,8 @@ class SettingsActivity : BaseActivity() {
 
     @Inject
     lateinit var serverManager: ServerManager
+
+    private val viewModel: AppLockViewModel by viewModels()
 
     private lateinit var authenticator: Authenticator
     private lateinit var blurView: BlurView
@@ -62,10 +66,12 @@ class SettingsActivity : BaseActivity() {
     @Parcelize
     sealed interface Deeplink : Parcelable {
         data object Developer : Deeplink
+        data class HomeNetwork(val serverId: Int) : Deeplink
         data object NotificationHistory : Deeplink
         data class QSTile(val tileId: String) : Deeplink
         data class Sensor(val sensorId: String) : Deeplink
         data object Websocket : Deeplink
+        data object AssistSettings : Deeplink
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,45 +96,53 @@ class SettingsActivity : BaseActivity() {
 
         if (savedInstanceState == null) {
             val settingsNavigation = IntentCompat.getParcelableExtra(intent, EXTRA_FRAGMENT, Deeplink::class.java)
-            supportFragmentManager.commit {
-                replace(
-                    R.id.content,
-                    when (settingsNavigation) {
-                        Deeplink.Websocket -> if (serverManager.defaultServers.size == 1) {
-                            WebsocketSettingFragment::class.java
-                        } else {
-                            SettingsFragment::class.java
-                        }
-                        Deeplink.Developer -> DeveloperSettingsFragment::class.java
-                        Deeplink.NotificationHistory -> NotificationHistoryFragment::class.java
-                        is Deeplink.Sensor -> SensorDetailFragment::class.java
-                        is Deeplink.QSTile -> ManageTilesFragment::class.java
-                        else -> SettingsFragment::class.java
-                    },
-                    when (settingsNavigation) {
-                        is Deeplink.Sensor -> {
-                            SensorDetailFragment.newInstance(settingsNavigation.sensorId).arguments
-                        }
-
-                        is Deeplink.QSTile -> {
-                            val tileId = settingsNavigation.tileId
-                            Bundle().apply { putString("id", tileId) }
-                        }
-
-                        Deeplink.Websocket -> {
-                            val servers = serverManager.defaultServers
-                            if (servers.size == 1) {
-                                Bundle().apply { putInt(WebsocketSettingFragment.EXTRA_SERVER, servers[0].id) }
+            lifecycleScope.launch {
+                supportFragmentManager.commit {
+                    replace(
+                        R.id.content,
+                        when (settingsNavigation) {
+                            Deeplink.Websocket -> if (serverManager.servers().size == 1) {
+                                WebsocketSettingFragment::class.java
                             } else {
+                                SettingsFragment::class.java
+                            }
+                            Deeplink.Developer -> DeveloperSettingsFragment::class.java
+                            is Deeplink.HomeNetwork -> SsidFragment::class.java
+                            Deeplink.NotificationHistory -> NotificationHistoryFragment::class.java
+                            is Deeplink.Sensor -> SensorDetailFragment::class.java
+                            is Deeplink.QSTile -> ManageTilesFragment::class.java
+                            Deeplink.AssistSettings -> AssistSettingsFragment::class.java
+                            else -> SettingsFragment::class.java
+                        },
+                        when (settingsNavigation) {
+                            is Deeplink.HomeNetwork -> {
+                                Bundle().apply { putInt(SsidFragment.EXTRA_SERVER, settingsNavigation.serverId) }
+                            }
+
+                            is Deeplink.Sensor -> {
+                                SensorDetailFragment.newInstance(settingsNavigation.sensorId).arguments
+                            }
+
+                            is Deeplink.QSTile -> {
+                                val tileId = settingsNavigation.tileId
+                                Bundle().apply { putString("id", tileId) }
+                            }
+
+                            Deeplink.Websocket -> {
+                                val servers = serverManager.servers()
+                                if (servers.size == 1) {
+                                    Bundle().apply { putInt(WebsocketSettingFragment.EXTRA_SERVER, servers[0].id) }
+                                } else {
+                                    null
+                                }
+                            }
+
+                            else -> {
                                 null
                             }
-                        }
-
-                        else -> {
-                            null
-                        }
-                    },
-                )
+                        },
+                    )
+                }
             }
         }
     }
@@ -198,19 +212,10 @@ class SettingsActivity : BaseActivity() {
      */
     private suspend fun isAppLocked(): Boolean {
         val serverFragment = supportFragmentManager.findFragmentByTag(ServerSettingsFragment.TAG)
-        val serverLocked = serverFragment?.let { isAppLocked((it as ServerSettingsFragment).getServerId()) } ?: false
-        return serverLocked || isAppLocked(ServerManager.SERVER_ID_ACTIVE)
-    }
-
-    suspend fun isAppLocked(serverId: Int?): Boolean {
-        return serverManager.getServer(serverId ?: ServerManager.SERVER_ID_ACTIVE)?.let {
-            try {
-                serverManager.integrationRepository(it.id).isAppLocked()
-            } catch (e: IllegalArgumentException) {
-                Timber.w(e, "Cannot determine app locked state")
-                false
-            }
+        val serverLocked = serverFragment?.let {
+            viewModel.isAppLocked((it as ServerSettingsFragment).getServerId())
         } ?: false
+        return serverLocked || viewModel.isAppLocked(ServerManager.SERVER_ID_ACTIVE)
     }
 
     /**
@@ -219,19 +224,8 @@ class SettingsActivity : BaseActivity() {
      */
     private fun setAppActive(active: Boolean) {
         val serverFragment = supportFragmentManager.findFragmentByTag(ServerSettingsFragment.TAG)
-        serverFragment?.let { setAppActive((it as ServerSettingsFragment).getServerId(), active) }
-        setAppActive(ServerManager.SERVER_ID_ACTIVE, active)
-    }
-
-    // TODO remove runBlocking https://github.com/home-assistant/android/issues/5688
-    fun setAppActive(serverId: Int?, active: Boolean) = runBlocking {
-        serverManager.getServer(serverId ?: ServerManager.SERVER_ID_ACTIVE)?.let {
-            try {
-                serverManager.integrationRepository(it.id).setAppActive(active)
-            } catch (e: IllegalArgumentException) {
-                Timber.w(e, "Cannot set app active $active for server $serverId")
-            }
-        }
+        serverFragment?.let { viewModel.setAppActive((it as ServerSettingsFragment).getServerId(), active) }
+        viewModel.setAppActive(ServerManager.SERVER_ID_ACTIVE, active)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

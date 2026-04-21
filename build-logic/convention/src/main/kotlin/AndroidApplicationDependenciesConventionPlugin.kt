@@ -26,7 +26,7 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
             extensions.getByType<ApplicationExtension>().apply {
                 dependencies {
                     "implementation"(project(":common"))
-                    "debugImplementation"(project(":onboarding"))
+                    "implementation"(project(":microwakeword"))
 
                     "implementation"(libs.blurView)
                     "implementation"(libs.haze)
@@ -39,6 +39,8 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
                     "implementation"(libs.kotlinx.coroutines.android)
                     "implementation"(libs.androidx.concurrent.ktx)
                     "fullImplementation"(libs.kotlinx.coroutines.play.services)
+
+                    "implementation"(libs.apache.commons.text)
 
                     "implementation"(libs.appcompat)
                     "implementation"(libs.androidx.lifecycle.runtime.ktx)
@@ -81,6 +83,10 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
                     "implementation"(libs.activity.compose)
                     "implementation"(libs.navigation.compose)
                     "implementation"(libs.core.remoteviews)
+                    "implementation"(libs.core.splashscreen)
+                    "implementation"(libs.core.ktx)
+                    "implementation"(libs.accompanist.permissions)
+                    "implementation"(libs.androidx.hilt.navigation.compose)
 
                     "implementation"(libs.bundles.androidx.glance)
 
@@ -92,6 +98,7 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
 
                     "implementation"(libs.reorderable)
                     "implementation"(libs.changeLog)
+                    "implementation"(libs.aboutlibraries.compose.m3)
 
                     "implementation"(libs.zxing)
                     "implementation"(libs.improv)
@@ -100,8 +107,14 @@ class AndroidApplicationDependenciesConventionPlugin : Plugin<Project> {
 
                     "androidTestImplementation"(libs.bundles.androidx.test)
                     "androidTestImplementation"(libs.leakcanary.android.instrumentation)
+                    "androidTestImplementation"(libs.hilt.android.testing)
 
                     "testImplementation"(libs.bundles.androidx.glance.testing)
+                    "testImplementation"(libs.navigation.test)
+                    "testImplementation"(libs.hilt.android.testing)
+                    "testImplementation"(libs.androidx.work.testing)
+
+                    "lintChecks"(libs.compose.lint.checks)
                 }
             }
         }

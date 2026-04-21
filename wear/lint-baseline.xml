@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<issues format="6" by="lint 8.13.1" type="baseline" client="gradle" dependencies="false" name="AGP (8.13.1)" variant="all" version="8.13.1">
+<issues format="6" by="lint 9.0.0" type="baseline" client="gradle" dependencies="false" name="AGP (9.0.0)" variant="all" version="9.0.0">
 
     <issue
         id="CustomSplashScreen"
@@ -19,7 +19,7 @@
         errorLine2="                ^">
         <location
             file="src/main/AndroidManifest.xml"
-            line="290"
+            line="291"
             column="17"/>
     </issue>
 
@@ -30,7 +30,7 @@
         errorLine2="                ^">
         <location
             file="src/main/AndroidManifest.xml"
-            line="292"
+            line="293"
             column="17"/>
     </issue>
 
@@ -41,7 +41,7 @@
         errorLine2="                ^">
         <location
             file="src/main/AndroidManifest.xml"
-            line="294"
+            line="295"
             column="17"/>
     </issue>
 
@@ -52,7 +52,7 @@
         errorLine2="                ^">
         <location
             file="src/main/AndroidManifest.xml"
-            line="296"
+            line="297"
             column="17"/>
     </issue>
 
@@ -74,7 +74,7 @@
         errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/home/views/DetailsPanelView.kt"
-            line="208"
+            line="207"
             column="21"/>
     </issue>
 
@@ -85,7 +85,7 @@
         errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/home/views/DetailsPanelView.kt"
-            line="261"
+            line="260"
             column="21"/>
     </issue>
 
@@ -96,7 +96,7 @@
         errorLine2="                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/home/views/DetailsPanelView.kt"
-            line="331"
+            line="330"
             column="21"/>
     </issue>
 
@@ -140,7 +140,7 @@
         errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/onboarding/OnboardingActivity.kt"
-            line="181"
+            line="182"
             column="13"/>
     </issue>
 
@@ -151,7 +151,7 @@
         errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/onboarding/OnboardingActivity.kt"
-            line="189"
+            line="190"
             column="13"/>
     </issue>
 
@@ -360,7 +360,7 @@
         errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/AndroidManifest.xml"
-            line="154"
+            line="155"
             column="35"/>
     </issue>
 
@@ -371,7 +371,7 @@
         errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/AndroidManifest.xml"
-            line="175"
+            line="176"
             column="35"/>
     </issue>
 
@@ -382,7 +382,7 @@
         errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/AndroidManifest.xml"
-            line="195"
+            line="196"
             column="35"/>
     </issue>
 
@@ -393,7 +393,7 @@
         errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/AndroidManifest.xml"
-            line="229"
+            line="230"
             column="35"/>
     </issue>
 
@@ -533,23 +533,12 @@
 
     <issue
         id="WearRecents"
-        message="Set `taskAffinity` for Wear activities to make them appear correctly in recents"
-        errorLine1="        &lt;activity"
-        errorLine2="        ^">
-        <location
-            file="src/main/AndroidManifest.xml"
-            line="118"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="WearRecents"
         message="Avoid using `FLAG_ACTIVITY_NEW_TASK` and `FLAG_ACTIVITY_CLEAR_TOP`"
         errorLine1="        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK"
         errorLine2="                              ~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/onboarding/integration/MobileAppIntegrationActivity.kt"
-            line="63"
+            line="69"
             column="31"/>
     </issue>
 
@@ -560,7 +549,7 @@
         errorLine2="                              ~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/onboarding/integration/MobileAppIntegrationActivity.kt"
-            line="63"
+            line="69"
             column="31"/>
     </issue>
 
@@ -571,7 +560,7 @@
         errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/phone/PhoneSettingsListener.kt"
-            line="224"
+            line="220"
             column="35"/>
     </issue>
 
@@ -582,7 +571,7 @@
         errorLine2="                                  ~~~~~~~~~~~~~~~~~~~~~~">
         <location
             file="src/main/kotlin/io/homeassistant/companion/android/phone/PhoneSettingsListener.kt"
-            line="224"
+            line="220"
             column="35"/>
     </issue>
 

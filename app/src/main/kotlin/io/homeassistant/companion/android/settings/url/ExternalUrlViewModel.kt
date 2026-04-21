@@ -37,9 +37,9 @@ class ExternalUrlViewModel @Inject constructor(
         state.get<Int>(ExternalUrlFragment.EXTRA_SERVER)?.let { serverId = it }
         viewModelScope.launch {
             serverManager.getServer(serverId)?.let {
-                canUseCloud = it.connection.canUseCloud()
+                canUseCloud = it.connection.canUseCloud
                 useCloud = it.connection.useCloud
-                externalUrl = it.connection.getUrl(isInternal = false, force = true).toString()
+                externalUrl = it.connection.externalUrl
             }
         }
     }
@@ -63,7 +63,7 @@ class ExternalUrlViewModel @Inject constructor(
         viewModelScope.launch {
             serverManager.getServer(serverId)?.let {
                 try {
-                    val formatted = UrlUtil.formattedUrlString(url)
+                    val formatted = UrlUtil.extractBaseUrl(url)
                     serverManager.updateServer(
                         it.copy(
                             connection = it.connection.copy(

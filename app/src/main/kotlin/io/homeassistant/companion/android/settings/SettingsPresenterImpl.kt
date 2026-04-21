@@ -1,46 +1,30 @@
 package io.homeassistant.companion.android.settings
 
-import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.getSystemService
 import androidx.preference.PreferenceDataStore
 import io.homeassistant.companion.android.BuildConfig
 import io.homeassistant.companion.android.R
 import io.homeassistant.companion.android.common.R as commonR
-import io.homeassistant.companion.android.common.data.integration.DeviceRegistration
 import io.homeassistant.companion.android.common.data.integration.impl.entities.RateLimitResponse
 import io.homeassistant.companion.android.common.data.prefs.NightModeTheme
 import io.homeassistant.companion.android.common.data.prefs.PrefsRepository
 import io.homeassistant.companion.android.common.data.servers.ServerManager
-import io.homeassistant.companion.android.common.util.AppVersion
-import io.homeassistant.companion.android.common.util.MessagingTokenProvider
-import io.homeassistant.companion.android.common.util.isAutomotive
-import io.homeassistant.companion.android.database.sensor.SensorDao
 import io.homeassistant.companion.android.database.server.Server
-import io.homeassistant.companion.android.database.server.ServerConnectionInfo
-import io.homeassistant.companion.android.database.server.ServerSessionInfo
-import io.homeassistant.companion.android.database.server.ServerType
-import io.homeassistant.companion.android.database.server.ServerUserInfo
-import io.homeassistant.companion.android.database.settings.SensorUpdateFrequencySetting
-import io.homeassistant.companion.android.database.settings.Setting
 import io.homeassistant.companion.android.database.settings.SettingsDao
-import io.homeassistant.companion.android.database.settings.WebsocketSetting
-import io.homeassistant.companion.android.onboarding.OnboardApp
-import io.homeassistant.companion.android.sensors.LocationSensorManager
+import io.homeassistant.companion.android.settings.assist.DefaultAssistantManager
 import io.homeassistant.companion.android.settings.language.LanguagesManager
 import io.homeassistant.companion.android.themes.NightModeManager
 import io.homeassistant.companion.android.util.ChangeLog
-import io.homeassistant.companion.android.util.UrlUtil
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -55,8 +39,7 @@ class SettingsPresenterImpl @Inject constructor(
     private val langsManager: LanguagesManager,
     private val changeLog: ChangeLog,
     private val settingsDao: SettingsDao,
-    private val sensorDao: SensorDao,
-    private val messagingTokenProvider: MessagingTokenProvider,
+    private val defaultAssistantManager: DefaultAssistantManager,
 ) : PreferenceDataStore(),
     SettingsPresenter {
 
@@ -160,9 +143,7 @@ class SettingsPresenterImpl @Inject constructor(
 
     override fun getSuggestionFlow(): StateFlow<SettingsHomeSuggestion?> = suggestionFlow
 
-    override fun getServersFlow(): StateFlow<List<Server>> = serverManager.defaultServersFlow
-
-    override fun getServerCount(): Int = serverManager.defaultServers.size
+    override suspend fun getServersFlow(): Flow<List<Server>> = serverManager.serversFlow
 
     override suspend fun getNotificationRateLimits(): RateLimitResponse? = withContext(Dispatchers.IO) {
         try {
@@ -172,7 +153,7 @@ class SettingsPresenterImpl @Inject constructor(
                 null
             }
         } catch (e: Exception) {
-            Timber.d("Unable to get rate limits")
+            Timber.d(e, "Unable to get rate limits")
             return@withContext null
         }
     }
@@ -187,81 +168,6 @@ class SettingsPresenterImpl @Inject constructor(
 
     override suspend fun setChangeLogPopupEnabled(enabled: Boolean) {
         prefsRepository.setChangeLogPopupEnabled(enabled)
-    }
-
-    override suspend fun addServer(result: OnboardApp.Output?) {
-        if (result != null) {
-            val (url, authCode, deviceName, deviceTrackingEnabled, notificationsEnabled) = result
-            val messagingToken = messagingTokenProvider()
-            var serverId: Int? = null
-            try {
-                val formattedUrl = UrlUtil.formattedUrlString(url)
-                val server = Server(
-                    _name = "",
-                    type = ServerType.TEMPORARY,
-                    connection = ServerConnectionInfo(
-                        externalUrl = formattedUrl,
-                    ),
-                    session = ServerSessionInfo(),
-                    user = ServerUserInfo(),
-                )
-                serverId = serverManager.addServer(server)
-                serverManager.authenticationRepository(serverId).registerAuthorizationCode(authCode)
-                serverManager.integrationRepository(serverId).registerDevice(
-                    DeviceRegistration(
-                        AppVersion.from(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
-                        deviceName,
-                        messagingToken,
-                    ),
-                )
-                serverManager.getServer()?.id?.let {
-                    serverManager.activateServer(it) // Prevent unexpected active server changes
-                }
-                serverId = serverManager.convertTemporaryServer(serverId)
-                serverId?.let {
-                    setLocationTracking(it, deviceTrackingEnabled)
-                    setNotifications(it, notificationsEnabled)
-                }
-                view.onAddServerResult(true, serverId)
-            } catch (e: Exception) {
-                Timber.e(e, "Exception while registering")
-                try {
-                    if (serverId != null) {
-                        serverManager.authenticationRepository(serverId).revokeSession()
-                        serverManager.removeServer(serverId)
-                    }
-                } catch (e: Exception) {
-                    Timber.e(e, "Can't revoke session")
-                }
-                view.onAddServerResult(false, null)
-            }
-        }
-    }
-
-    private suspend fun setLocationTracking(serverId: Int, enabled: Boolean) {
-        sensorDao.setSensorsEnabled(
-            sensorIds = listOf(
-                LocationSensorManager.backgroundLocation.id,
-                LocationSensorManager.zoneLocation.id,
-                LocationSensorManager.singleAccurateLocation.id,
-            ),
-            serverId = serverId,
-            enabled = enabled,
-        )
-    }
-
-    private suspend fun setNotifications(serverId: Int, enabled: Boolean) {
-        // Full: this only refers to the system permission on Android 13+ so no changes are necessary.
-        // Minimal: change persistent connection setting to reflect preference.
-        if (BuildConfig.FLAVOR != "full") {
-            settingsDao.insert(
-                Setting(
-                    serverId,
-                    if (enabled) WebsocketSetting.ALWAYS else WebsocketSetting.NEVER,
-                    SensorUpdateFrequencySetting.NORMAL,
-                ),
-            )
-        }
     }
 
     override fun updateSuggestions(context: Context) {
@@ -282,23 +188,7 @@ class SettingsPresenterImpl @Inject constructor(
         val suggestions = mutableListOf<SettingsHomeSuggestion>()
 
         // Assist
-        var assistantSuggestion = serverManager.defaultServers.any { it.version?.isAtLeast(2023, 5) == true }
-        assistantSuggestion = if (
-            assistantSuggestion &&
-            context.isAutomotive()
-        ) {
-            false
-        } else if (assistantSuggestion && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val roleManager = context.getSystemService<RoleManager>()
-            roleManager?.isRoleAvailable(RoleManager.ROLE_ASSISTANT) == true &&
-                !roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)
-        } else if (assistantSuggestion) {
-            val defaultApp: String? = Settings.Secure.getString(context.contentResolver, "assistant")
-            defaultApp?.contains(BuildConfig.APPLICATION_ID) == false
-        } else {
-            false
-        }
-        if (assistantSuggestion) {
+        if (defaultAssistantManager.shouldSuggestAssistantSetup()) {
             suggestions += SettingsHomeSuggestion(
                 SettingsPresenter.SUGGESTION_ASSISTANT_APP,
                 commonR.string.suggestion_assist_title,

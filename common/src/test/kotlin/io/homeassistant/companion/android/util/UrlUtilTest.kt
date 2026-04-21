@@ -1,11 +1,14 @@
 package io.homeassistant.companion.android.util
 
+import io.homeassistant.companion.android.common.data.MalformedHttpUrlException
 import java.net.URL
 import kotlinx.coroutines.test.runTest
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -13,6 +16,12 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.ValueSource
 
+/**
+ * Tests for [UrlUtil] and related extension functions that don't require Android framework classes.
+ *
+ * For tests involving [android.net.Uri] extension functions (which require Robolectric),
+ * see [UriExtensionsTest].
+ */
 class UrlUtilTest {
 
     private lateinit var baseUrl: URL
@@ -20,6 +29,41 @@ class UrlUtilTest {
     @BeforeEach
     fun setUp() {
         baseUrl = URL("https://example.com:8123/")
+    }
+
+    @ParameterizedTest
+    @CsvSource(
+        value = [
+            "https://example.com:8123/path/to/page?query=1#fragment, https://example.com:8123/",
+            "http://homeassistant.local:8123, http://homeassistant.local:8123/",
+            "https://my.domain.com, https://my.domain.com/",
+            "http://192.168.1.1:8123/lovelace, http://192.168.1.1:8123/",
+            "https://ha.example.com:443, https://ha.example.com/",
+        ],
+    )
+    fun `Given valid URL when calling extractBaseUrl then returns scheme host and port only`(input: String, expected: String) {
+        assertEquals(expected, UrlUtil.extractBaseUrl(input))
+    }
+
+    @Test
+    fun `Given empty string when calling extractBaseUrl then throws MalformedHttpUrlException`() {
+        assertThrows(MalformedHttpUrlException::class.java) {
+            UrlUtil.extractBaseUrl("")
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "not a url",
+            "ftp://example.com",
+            "://missing-scheme",
+        ],
+    )
+    fun `Given invalid URL when calling extractBaseUrl then throws MalformedHttpUrlException`(input: String) {
+        assertThrows(MalformedHttpUrlException::class.java) {
+            UrlUtil.extractBaseUrl(input)
+        }
     }
 
     @ParameterizedTest
@@ -171,5 +215,30 @@ class UrlUtilTest {
         // Google's public DNS IP
         val url = URL("http://8.8.8.8:80")
         assertTrue(url.isPubliclyAccessible())
+    }
+
+    @ParameterizedTest(name = "hasSameOrigin: {0} vs {1} -> {2}")
+    @CsvSource(
+        "https://example.com, https://example.com, true",
+        "https://example.com/path, https://example.com, true",
+        "https://example.com?query=1, https://example.com, true",
+        "https://example.com:443, https://example.com, true",
+        "http://example.com:80, http://example.com, true",
+        "https://example.com:8123, https://example.com:8123, true",
+        "https://example.com, https://other.com, false",
+        "https://example.com, http://example.com, false",
+        "https://example.com:8123, https://example.com:8124, false",
+        "https://example.com, https://example.com.evil.com, false",
+        "https://sub.example.com, https://example.com, false",
+    )
+    fun `hasSameOrigin returns expected value`(
+        url1: String,
+        url2: String,
+        expected: Boolean,
+    ) {
+        val httpUrl1 = url1.toHttpUrl()
+        val httpUrl2 = url2.toHttpUrl()
+
+        assertEquals(expected, httpUrl1.hasSameOrigin(httpUrl2))
     }
 }

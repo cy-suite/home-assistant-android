@@ -117,12 +117,10 @@ internal class FakePlayer(
     }
 
     override fun getAvailableCommands(): Player.Commands {
-        TODO("Not yet implemented")
+        return Player.Commands.Builder().addAllCommands().build()
     }
 
-    override fun prepare() {
-        TODO("Not yet implemented")
-    }
+    override fun prepare() {}
 
     override fun getPlaybackState(): Int {
         return if (playing) Player.STATE_READY else Player.STATE_IDLE
@@ -317,7 +315,7 @@ internal class FakePlayer(
     }
 
     override fun getCurrentMediaItem(): MediaItem? {
-        TODO("Not yet implemented")
+        return null
     }
 
     override fun getMediaItemCount(): Int {
@@ -410,6 +408,14 @@ internal class FakePlayer(
 
     override fun getVolume(): Float {
         return if (muted) 0f else 1.0f
+    }
+
+    override fun mute() {
+        TODO("Not yet implemented")
+    }
+
+    override fun unmute() {
+        TODO("Not yet implemented")
     }
 
     override fun clearVideoSurface() {
