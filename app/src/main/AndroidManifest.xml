@@ -35,6 +35,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -44,26 +45,27 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions"/>
     <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
     <uses-permission android:name="android.permission.health.READ_ACTIVE_CALORIES_BURNED" />
-    <!--    <uses-permission android:name="android.permission.health.READ_BASAL_BODY_TEMPERATURE" />-->
-    <!--    <uses-permission android:name="android.permission.health.READ_BASAL_METABOLIC_RATE" />-->
+    <uses-permission android:name="android.permission.health.READ_BASAL_BODY_TEMPERATURE" />
+    <uses-permission android:name="android.permission.health.READ_BASAL_METABOLIC_RATE" />
     <uses-permission android:name="android.permission.health.READ_BLOOD_GLUCOSE" />
     <uses-permission android:name="android.permission.health.READ_BLOOD_PRESSURE" />
     <uses-permission android:name="android.permission.health.READ_BODY_FAT" />
-    <!--    <uses-permission android:name="android.permission.health.READ_BODY_WATER_MASS" />-->
-    <!--    <uses-permission android:name="android.permission.health.READ_BODY_TEMPERATURE" />-->
-    <!--    <uses-permission android:name="android.permission.health.READ_BONE_MASS" />-->
+    <uses-permission android:name="android.permission.health.READ_BODY_TEMPERATURE" />
+    <uses-permission android:name="android.permission.health.READ_BODY_WATER_MASS" />
+    <uses-permission android:name="android.permission.health.READ_BONE_MASS" />
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_ELEVATION_GAINED" />
     <uses-permission android:name="android.permission.health.READ_FLOORS_CLIMBED" />
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <uses-permission android:name="android.permission.health.READ_HEART_RATE_VARIABILITY" />
-    <!--    <uses-permission android:name="android.permission.health.READ_HEIGHT" />-->
-    <!--    <uses-permission android:name="android.permission.health.READ_HYDRATION" />-->
-    <!--    <uses-permission android:name="android.permission.health.READ_LEAN_BODY_MASS" />-->
+    <uses-permission android:name="android.permission.health.READ_HEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_HYDRATION" />
+    <uses-permission android:name="android.permission.health.READ_LEAN_BODY_MASS" />
     <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
     <uses-permission android:name="android.permission.health.READ_RESPIRATORY_RATE" />
     <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
@@ -101,6 +103,46 @@
         android:intentMatchingFlags="enforceIntentFilter"
         tools:ignore="GoogleAppIndexingWarning,UnusedAttribute"
         tools:targetApi="tiramisu">
+
+        <!--
+        WARNING: Do not change the fully qualified name of this activity.
+        Android shortcuts are tied to its component name; renaming it will permanently
+        break all user-created shortcuts from previous versions.
+        -->
+        <activity
+            android:name="io.homeassistant.companion.android.launch.LaunchActivity"
+            android:exported="true"
+            android:configChanges="uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.LaunchScreen">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+        WARNING: Do not change the fully qualified name of this alias.
+        It is hardcoded in settings to enable it programmatically. Renaming it would also
+        break the app for users who set it as their default launcher when updating.
+        -->
+        <activity-alias
+            android:name="io.homeassistant.companion.android.launch.LauncherAlias"
+            android:enabled="false"
+            android:exported="true"
+            android:targetActivity="io.homeassistant.companion.android.launch.LaunchActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- Start things like SensorWorker on device boot -->
         <receiver android:name=".websocket.WebsocketBroadcastReceiver"
@@ -359,11 +401,6 @@
         </activity>
 
         <activity
-            android:name=".onboarding.OnboardingActivity"
-            android:configChanges="orientation|screenSize|keyboard|keyboardHidden|navigation"
-            android:theme="@style/Theme.HomeAssistant.Config" />
-
-        <activity
             android:name=".settings.wear.SettingsWearActivity"
             android:parentActivityName=".settings.SettingsActivity"
             android:configChanges="orientation|screenSize"
@@ -420,7 +457,7 @@
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
             android:exported="false"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation" />
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode" />
 
         <activity
             android:name=".settings.SettingsActivity"
@@ -508,6 +545,38 @@
                 <action android:name="android.intent.action.CREATE_SHORTCUT"/>
             </intent-filter>
         </activity>
+
+        <!-- Voice Interaction Service for being the system's default assistant -->
+        <service
+            android:name=".assist.service.AssistVoiceInteractionService"
+            android:exported="true"
+            android:foregroundServiceType="microphone"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name=".assist.service.AssistVoiceInteractionSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <service
+            android:name=".assist.service.AssistRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

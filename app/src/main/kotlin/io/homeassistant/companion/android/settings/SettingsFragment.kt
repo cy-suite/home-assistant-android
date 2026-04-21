@@ -1,9 +1,6 @@
 package io.homeassistant.companion.android.settings
 
-import android.annotation.SuppressLint
 import android.app.UiModeManager
-import android.content.ActivityNotFoundException
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -16,6 +13,7 @@ import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -34,12 +32,15 @@ import io.homeassistant.companion.android.common.util.isAutomotive
 import io.homeassistant.companion.android.common.util.isIgnoringBatteryOptimizations
 import io.homeassistant.companion.android.common.util.maybeAskForIgnoringBatteryOptimizations
 import io.homeassistant.companion.android.database.server.Server
+import io.homeassistant.companion.android.launch.intentLaunchOnboarding
 import io.homeassistant.companion.android.nfc.NfcSetupActivity
-import io.homeassistant.companion.android.onboarding.OnboardApp
+import io.homeassistant.companion.android.settings.assist.AssistSettingsFragment
+import io.homeassistant.companion.android.settings.assist.DefaultAssistantManager
 import io.homeassistant.companion.android.settings.controls.ManageControlsSettingsFragment
 import io.homeassistant.companion.android.settings.developer.DeveloperSettingsFragment
 import io.homeassistant.companion.android.settings.gestures.GesturesFragment
 import io.homeassistant.companion.android.settings.language.LanguagesProvider
+import io.homeassistant.companion.android.settings.license.LicensesFragment
 import io.homeassistant.companion.android.settings.notification.NotificationChannelFragment
 import io.homeassistant.companion.android.settings.notification.NotificationHistoryFragment
 import io.homeassistant.companion.android.settings.qs.ManageTilesFragment
@@ -64,22 +65,19 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
-class SettingsFragment(private val presenter: SettingsPresenter, private val langProvider: LanguagesProvider) :
-    PreferenceFragmentCompat(),
+class SettingsFragment(
+    private val presenter: SettingsPresenter,
+    private val langProvider: LanguagesProvider,
+    private val defaultAssistantManager: DefaultAssistantManager,
+) : PreferenceFragmentCompat(),
     SettingsView {
 
-    private val requestBackgroundAccessResult =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            updateBackgroundAccessPref()
-        }
+    private val activityViewModel: AppLockViewModel by activityViewModels()
 
     private val requestNotificationPermissionResult =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
             updateNotificationChannelPrefs()
         }
-
-    private val requestOnboardingResult = registerForActivityResult(OnboardApp(), this::onOnboardingComplete)
-
     private var serverAuth: Int? = null
     private val serverMutex = Mutex()
 
@@ -140,13 +138,15 @@ class SettingsFragment(private val presenter: SettingsPresenter, private val lan
 
         findPreference<Preference>("server_add")?.let {
             it.setOnPreferenceClickListener {
-                requestOnboardingResult.launch(
-                    OnboardApp.Input(
-                        // Empty url skips the 'Welcome' screen
-                        url = "",
-                        discoveryOptions = OnboardApp.DiscoveryOptions.HIDE_EXISTING,
-                    ),
-                )
+                requireContext().apply {
+                    startActivity(
+                        intentLaunchOnboarding(
+                            urlToOnboard = null,
+                            hideExistingServers = true,
+                            skipWelcome = true,
+                        ),
+                    )
+                }
                 return@setOnPreferenceClickListener true
             }
         }
@@ -166,6 +166,14 @@ class SettingsFragment(private val presenter: SettingsPresenter, private val lan
                 }
                 return@setOnPreferenceClickListener true
             }
+        }
+
+        findPreference<Preference>("assist_settings")?.setOnPreferenceClickListener {
+            parentFragmentManager.commit {
+                replace(R.id.content, AssistSettingsFragment::class.java, null)
+                addToBackStack(getString(commonR.string.assist))
+            }
+            return@setOnPreferenceClickListener true
         }
 
         findPreference<Preference>("gestures")?.setOnPreferenceClickListener {
@@ -361,6 +369,14 @@ class SettingsFragment(private val presenter: SettingsPresenter, private val lan
             it.summary = BuildConfig.VERSION_NAME
         }
 
+        findPreference<Preference>("licenses")?.setOnPreferenceClickListener {
+            parentFragmentManager.commit {
+                replace(R.id.content, LicensesFragment::class.java, null)
+                addToBackStack(getString(commonR.string.licenses))
+            }
+            return@setOnPreferenceClickListener true
+        }
+
         findPreference<ListPreference>("languages")?.let {
             lifecycleScope.launch {
                 val languages = langProvider.getSupportedLanguages(requireContext())
@@ -435,24 +451,8 @@ class SettingsFragment(private val presenter: SettingsPresenter, private val lan
         }
     }
 
-    @SuppressLint("InlinedApi")
     private fun updateAssistantApp() {
-        // On Android Q+, this is a workaround as Android doesn't allow requesting the assistant role
-        try {
-            val openIntent = Intent("android.settings.VOICE_INPUT_SETTINGS")
-            openIntent.component =
-                ComponentName("com.android.settings", "com.android.settings.Settings\$ManageAssistActivity")
-            openIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            startActivity(openIntent)
-        } catch (e: ActivityNotFoundException) {
-            // The exact activity/package doesn't exist on this device, use the official intent
-            // which sends the user to the 'Default apps' screen (one more tap required to change)
-            startActivity(
-                Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                },
-            )
-        }
+        startActivity(defaultAssistantManager.getSetDefaultAssistantIntent())
     }
 
     private fun updateBackgroundAccessPref() {
@@ -508,7 +508,7 @@ class SettingsFragment(private val presenter: SettingsPresenter, private val lan
                 serverAuth = server.id
                 val settingsActivity = requireActivity() as SettingsActivity
                 lifecycleScope.launch {
-                    val needsAuth = settingsActivity.isAppLocked(server.id)
+                    val needsAuth = activityViewModel.isAppLocked(server.id)
                     if (!needsAuth) {
                         onServerLockResult(Authenticator.SUCCESS)
                     } else {
@@ -546,7 +546,7 @@ class SettingsFragment(private val presenter: SettingsPresenter, private val lan
 
     private fun onServerLockResult(result: Int): Boolean {
         if (result == Authenticator.SUCCESS && serverAuth != null) {
-            (activity as? SettingsActivity)?.setAppActive(serverAuth, true)
+            activityViewModel.setAppActive(serverAuth, true)
             parentFragmentManager.commit {
                 replace(
                     R.id.content,
@@ -558,12 +558,6 @@ class SettingsFragment(private val presenter: SettingsPresenter, private val lan
             }
         }
         return true
-    }
-
-    private fun onOnboardingComplete(result: OnboardApp.Output?) {
-        lifecycleScope.launch {
-            presenter.addServer(result)
-        }
     }
 
     private fun openNotificationSettings() {

@@ -1,15 +1,19 @@
 package io.homeassistant.companion.android.common.util
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.ui.platform.AndroidUriHandler
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
+import io.homeassistant.companion.android.common.BuildConfig
+import io.homeassistant.companion.android.common.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 /**
  * Wrapper around [Context.getSharedPreferences] that uses [Dispatchers.IO] to ensure
@@ -47,25 +51,53 @@ fun Context.isAutomotive(): Boolean {
  * TODO this should not be exposed to the wear module https://github.com/home-assistant/android/discussions/5771
  */
 fun Context.maybeAskForIgnoringBatteryOptimizations() {
-    if (!isIgnoringBatteryOptimizations()) {
-        startActivity(
-            Intent(
-                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                "package:$packageName".toUri(),
-            ),
-        )
+    createBatteryOptimizationIntent()?.let { startActivity(it) }
+}
+
+/**
+ * Creates an [Intent] to request ignoring battery optimizations.
+ *
+ * This intent can be used with an [androidx.activity.result.ActivityResultLauncher] to
+ * wait for the user to respond to the battery optimization dialog before proceeding.
+ *
+ * @return An [Intent] configured to request battery optimization exemption, or `null` if
+ *         the app is already ignoring battery optimizations or the intent cannot be resolved
+ *         (some OEM devices don't support this intent).
+ */
+// Suppressing QueryPermissionsNeeded: System Settings intents are always visible per Android's
+// package visibility documentation, and the app has QUERY_ALL_PACKAGES permission.
+@SuppressLint("BatteryLife", "QueryPermissionsNeeded")
+fun Context.createBatteryOptimizationIntent(): Intent? {
+    if (isIgnoringBatteryOptimizations()) return null
+
+    val intent = Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        "package:$packageName".toUri(),
+    )
+    return if (intent.resolveActivity(packageManager) != null) {
+        intent
+    } else {
+        null
     }
 }
 
 /**
  * Checks if the app is ignoring battery optimizations.
  *
- * TODO this should not be exposed to the wear module https://github.com/home-assistant/android/discussions/5771
  * @return `true` if the app is ignoring battery optimizations, `false` otherwise.
  */
 fun Context.isIgnoringBatteryOptimizations(): Boolean {
-    return Build.VERSION.SDK_INT <= Build.VERSION_CODES.M ||
-        getSystemService<PowerManager>()
-            ?.isIgnoringBatteryOptimizations(packageName ?: "")
-            ?: false
+    return getSystemService<PowerManager>()
+        ?.isIgnoringBatteryOptimizations(packageName ?: "")
+        ?: false
+}
+
+suspend fun Context.openUri(uri: String, onShowSnackbar: suspend (message: String, action: String?) -> Boolean) {
+    try {
+        AndroidUriHandler(this).openUri(uri)
+    } catch (e: IllegalArgumentException) {
+        // Don't log e in release to not leak the URL in the log
+        Timber.e(e.takeIf { BuildConfig.DEBUG }, "Failed to navigate open uri")
+        onShowSnackbar(getString(R.string.fail_to_navigate_to_uri, uri), null)
+    }
 }
